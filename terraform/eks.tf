@@ -62,6 +62,34 @@ resource "aws_eks_cluster" "this" {
   }
 }
 
+# Launch template dos nodes. Motivo principal: os pods usam o metadata service
+# (IMDSv2) para obter a credencial da role dos nodes e falar com SQS e DynamoDB.
+# Com IP próprio (VPC CNI), o pod fica a dois saltos de rede do IMDS, e o padrão
+# do EKS é um salto só — o SDK falharia com "Could not load credentials".
+resource "aws_launch_template" "nodes" {
+  name_prefix = "${var.project}-nodes-"
+
+  metadata_options {
+    http_endpoint               = "enabled"
+    http_tokens                 = "required"
+    http_put_response_hop_limit = 2
+  }
+
+  block_device_mappings {
+    device_name = "/dev/xvda"
+    ebs {
+      volume_size           = 20
+      volume_type           = "gp3"
+      delete_on_termination = true
+    }
+  }
+
+  tag_specifications {
+    resource_type = "instance"
+    tags          = { Name = "${var.project}-node" }
+  }
+}
+
 resource "aws_eks_node_group" "this" {
   cluster_name    = aws_eks_cluster.this.name
   node_group_name = "${var.project}-nodes"
@@ -70,7 +98,11 @@ resource "aws_eks_node_group" "this" {
 
   instance_types = [var.node_instance_type]
   capacity_type  = "ON_DEMAND"
-  disk_size      = 20
+
+  launch_template {
+    id      = aws_launch_template.nodes.id
+    version = aws_launch_template.nodes.latest_version
+  }
 
   scaling_config {
     desired_size = var.node_desired_size
