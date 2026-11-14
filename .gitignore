@@ -1,0 +1,17 @@
+# Terraform
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfplan
+tfplan
+plan.txt
+crash.log
+*.tfvars
+!*.tfvars.example
+.build/
+kubeconfig*
+
+# Ambiente
+.env
+.env.*
+!.env.example

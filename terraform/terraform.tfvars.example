@@ -1,0 +1,19 @@
+# Copie para terraform.tfvars se precisar sobrescrever algum padrao.
+# Nenhum segredo vai aqui: todos sao gerados pelo Terraform (segredos.tf).
+
+region             = "us-east-1"
+project            = "oficina"
+cluster_version    = "1.31"
+node_instance_type = "t3.medium"
+node_desired_size  = 2
+node_min_size      = 2
+node_max_size      = 4
+namespace          = "oficina"
+
+# Roles pre-criadas pelo Learner Lab, localizadas por expressao regular.
+eks_cluster_role_regex = ".*LabEksClusterRole.*"
+eks_node_role_regex    = ".*LabEksNodeRole.*"
+lab_role_name          = "LabRole"
+
+lambda_runtime     = "nodejs20.x"
+log_retention_days = 7

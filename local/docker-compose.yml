@@ -1,0 +1,101 @@
+# Infra local compartilhada da Fase 4: AWS emulada (Floci), bancos de cada serviço e SMTP de teste.
+# Os serviços rodam fora daqui (pnpm start:dev) ou pelo compose de cada repositório.
+name: oficina-local
+
+services:
+  floci:
+    image: floci/floci:2.3.0
+    # 4500 é a UI: ela roda dentro da rede do Floci para enxergar localhost:4566.
+    ports: ['4566:4566', '4500:4500']
+    healthcheck:
+      test: ['CMD', '/usr/local/bin/healthcheck.sh']
+      interval: 3s
+      retries: 20
+
+  floci-ui:
+    image: floci/floci-ui:0.7.0 # mesma versão que o Floci 2.3.0 usa; a latest é recusada por ele
+    network_mode: 'service:floci'
+    depends_on: [floci]
+    environment:
+      FLOCI_ENDPOINT: http://localhost:4566
+      AWS_ACCESS_KEY_ID: test
+      AWS_SECRET_ACCESS_KEY: test
+      AWS_REGION: us-east-1
+
+  # Cria filas e tabela no Floci. Na AWS quem cria é o Terraform de cada serviço.
+  aws-init:
+    image: amazon/aws-cli:2.22.35
+    depends_on:
+      floci: { condition: service_healthy }
+    environment:
+      AWS_ACCESS_KEY_ID: test
+      AWS_SECRET_ACCESS_KEY: test
+      AWS_DEFAULT_REGION: us-east-1
+    entrypoint: ['sh', '/init/init-aws.sh']
+    volumes: ['./init-aws.sh:/init/init-aws.sh:ro']
+
+  postgres-os:
+    image: postgres:17-alpine
+    environment: { POSTGRES_USER: os, POSTGRES_PASSWORD: os, POSTGRES_DB: os }
+    ports: ['5433:5432']
+    volumes: ['pg-os:/var/lib/postgresql/data']
+    healthcheck: { test: ['CMD-SHELL', 'pg_isready -U os'], interval: 3s, retries: 20 }
+
+  postgres-billing:
+    image: postgres:17-alpine
+    environment: { POSTGRES_USER: billing, POSTGRES_PASSWORD: billing, POSTGRES_DB: billing }
+    ports: ['5434:5432']
+    volumes: ['pg-billing:/var/lib/postgresql/data']
+    healthcheck: { test: ['CMD-SHELL', 'pg_isready -U billing'], interval: 3s, retries: 20 }
+
+  mailhog:
+    image: mailhog/mailhog:v1.0.1
+    ports: ['1025:1025', '8025:8025']
+
+  # ---------- Observabilidade ----------
+  prometheus:
+    image: prom/prometheus:v3.5.0
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --web.enable-remote-write-receiver   # recebe o mapa de serviços do Tempo
+      - --enable-feature=exemplar-storage
+    ports: ['9090:9090']
+    volumes: ['./observabilidade/prometheus.yml:/etc/prometheus/prometheus.yml:ro']
+
+  tempo:
+    image: grafana/tempo:2.8.2
+    command: ['-config.file=/etc/tempo.yaml']
+    ports: ['3200:3200']
+    volumes: ['./observabilidade/tempo.yaml:/etc/tempo.yaml:ro', 'tempo:/var/tempo']
+
+  loki:
+    image: grafana/loki:3.5.5
+    command: ['-config.file=/etc/loki/local-config.yaml']
+    ports: ['3100:3100']
+
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.135.0
+    command: ['--config=/etc/otelcol/config.yaml']
+    ports: ['4317:4317', '4318:4318']
+    volumes: ['./observabilidade/otel-collector.yaml:/etc/otelcol/config.yaml:ro']
+    depends_on: [tempo, loki]
+
+  grafana:
+    image: grafana/grafana:12.1.1
+    ports: ['3000:3000']
+    environment:
+      # Ambiente local: acesso anônimo como admin, sem senha para versionar.
+      GF_AUTH_ANONYMOUS_ENABLED: 'true'
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Admin
+      GF_AUTH_DISABLE_LOGIN_FORM: 'true'
+      GF_FEATURE_TOGGLES_ENABLE: traceqlEditor
+    volumes:
+      - ./observabilidade/grafana/datasources:/etc/grafana/provisioning/datasources:ro
+      - ./observabilidade/grafana/dashboards-provider:/etc/grafana/provisioning/dashboards:ro
+      - ./observabilidade/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    depends_on: [prometheus, tempo, loki]
+
+volumes:
+  tempo:
+  pg-os:
+  pg-billing:
